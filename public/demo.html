@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>測試用故障網站</title></head>
+<body>
+  <h1>故意做錯的測試網站</h1>
+
+  <!-- 錯誤1: 死按鈕 (沒綁任何事件) -->
+  <button id="dead">立即購買</button>
+
+  <!-- 錯誤2: href="#" 假連結沒功能 -->
+  <a href="#">查看更多</a>
+
+  <!-- 錯誤3: LINE 下載頁連結 (應該是加好友) -->
+  <a href="https://line.me/zh-hant/download">加入 LINE 好友</a>
+
+  <!-- 錯誤4: line:// 深層連結 -->
+  <a href="line://ti/p/@abc123">LINE 諮詢</a>
+
+  <!-- 錯誤5: 404 連結 -->
+  <a href="https://bento-shop.vercel.app/this-page-does-not-exist-404">產品介紹</a>
+
+  <!-- 錯誤6: 破圖 -->
+  <img src="/no-such-image.jpg" alt="主視覺" width="200">
+
+  <!-- 正常的對照組: 有功能的按鈕 -->
+  <button onclick="document.getElementById('out').textContent='clicked ' + Date.now()">正常按鈕</button>
+  <div id="out"></div>
+
+  <!-- 正常的對照組: 正常連結 -->
+  <a href="https://bento-shop.vercel.app/zh">正常連結</a>
+
+  <!-- 錯誤7: 手機版跑版 (固定超寬元素) -->
+  <div style="width:1200px;background:#eee">這個元素固定 1200px 寬，手機會跑版</div>
+
+  <script>console.error('這是一個故意的 console 錯誤');</script>
+</body>
+</html>
