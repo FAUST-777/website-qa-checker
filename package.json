@@ -1,0 +1,22 @@
+{
+  "name": "website-qa-checker",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@sparticuz/chromium": "^138.0.2",
+    "next": "^15.3.3",
+    "puppeteer-core": "^24.10.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "typescript": "^5"
+  }
+}
