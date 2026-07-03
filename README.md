@@ -2,7 +2,8 @@
 
 > 貼上網址 → 自動檢查 → 直接看到要改什麼
 
-**線上使用：** https://website-qa-checker.vercel.app （部署後更新）
+**線上使用：** https://website-qa-checker.vercel.app
+**示範用故障網頁（練習用）：** https://website-qa-checker.vercel.app/demo.html
 
 ## 需求起因
 
