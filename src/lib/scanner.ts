@@ -30,7 +30,7 @@ const MAX_CLICK_TESTS = 25;
 const ANALYTICS_HOSTS = /google-analytics|googletagmanager|facebook\.|fbcdn|doubleclick|clarity\.ms|hotjar|cloudflareinsights/i;
 const SKIP_HREF = /^(mailto:|tel:|sms:|javascript:|#|$)/i;
 // 平台/框架產生的無害 console 訊息，過濾掉避免報告塞滿雜訊
-const IGNORE_CONSOLE = /report-only|Permissions policy|permissions policy|X-Frame-Options|third-party cookie|was preloaded|deprecated|slow network is detected/i;
+const IGNORE_CONSOLE = /report-only|Permissions policy|permissions policy|X-Frame-Options|third-party cookie|was preloaded|deprecated|slow network is detected|Minified React error #(405|418|423|425)/i;
 // 一律阻擋機器人的外送/訂位平台，403 屬正常現象
 const BOT_BLOCKING_PLATFORMS = /ubereats\.com|foodpanda\.|inline\.app|opentable\./i;
 
@@ -190,12 +190,11 @@ async function checkLinks(
           detail: `連結：${l.href}\n錯誤：${r.error}`,
         });
       } else if (r.status === 401 || r.status === 403 || r.status === 999) {
-        const isPlatform = BOT_BLOCKING_PLATFORMS.test(l.href);
+        // 已知一律阻擋機器人的外送/訂位平台，403 是正常現象，不列入報告以免業務誤會連結壞掉
+        if (BOT_BLOCKING_PLATFORMS.test(l.href)) continue;
         findings.push({
           severity: 'warning', category: '失效連結', pageUrl,
-          message: isPlatform
-            ? `「${label}」是外送/訂位平台連結，平台會阻擋自動檢查（HTTP ${r.status}），連結本身通常是正常的，人工快速點一下確認即可`
-            : `「${label}」回應 HTTP ${r.status}（可能是對方網站阻擋機器人），請人工點一次確認`,
+          message: `「${label}」回應 HTTP ${r.status}（可能是對方網站阻擋機器人），請人工點一次確認`,
           detail: `連結：${l.href}`,
         });
       }
@@ -223,6 +222,15 @@ async function clickTest(
       const inForm = !!el.closest('form');
       const type = (el.getAttribute('type') || '').toLowerCase();
       if (!visible || disabled) return;
+      // 有尺寸但實際上看不到/點不到的元素（例如 Framer 輪播在第一張時的 Previous 箭頭
+      // 是 opacity:0 + pointer-events:none），對使用者不存在，不測
+      const cs = getComputedStyle(el);
+      if (parseFloat(cs.opacity) < 0.05 || cs.visibility === 'hidden' || cs.pointerEvents === 'none') return;
+      // 輪播/滑動元件的前後箭頭在邊界時本來就沒反應，屬正常行為，不測
+      const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+      const nearbyCls = ((typeof el.className === 'string' ? el.className : '') + ' ' +
+        (el.parentElement && typeof el.parentElement.className === 'string' ? el.parentElement.className : '')).toLowerCase();
+      if (/^(previous|next|prev)$/.test(ariaLabel) || /carousel|slider|swiper|slick|splide|glide|flickity|wslide-arrow/.test(nearbyCls)) return;
       if (inForm || type === 'submit') return; // 避免真的送出表單
       if (tag === 'a' && href && !['#', 'javascript:void(0)', 'javascript:;', 'javascript:void(0);'].includes(href)) return;
       let text = ((el as HTMLElement).innerText || el.getAttribute('aria-label') || '').trim().slice(0, 40);

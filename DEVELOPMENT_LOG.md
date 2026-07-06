@@ -97,6 +97,31 @@
 
 本日 push 後 Vercel 未自動觸發部署（與 xi-cai-bento-shop 相同狀況），最終仍以 `npx vercel --prod --yes --scope faust777s-projects` 手動部署。後續 push 後需確認正式站版本，必要時手動部署。
 
+## 階段五：使用者回報誤判——泰速竹北店案例（2026-07-06）
+
+### 問題回報
+
+使用者實測 `thaispeed-zhubei.framer.website` 後回報兩個問題：
+1. 報告說按鈕「Previous」按下去沒反應，但網站上根本看不到這顆按鈕。
+2. UberEats 連結被列為失效，但人工點開是正常的。
+
+### 除錯過程與根因
+
+1. **「Previous」**：實際檢查 about-us 頁 DOM，發現是 Framer 相簿輪播的「上一張」箭頭。輪播停在第一張時 Framer 將它設為 `opacity: 0` + `pointer-events: none`——對使用者是隱形且點不到的，但檢查器的可見性判斷只看 offsetWidth/Height（元素有 40×40 尺寸），於是照點並誤報死按鈕。
+2. **UberEats**：外送平台一律以 403 阻擋機器人（先前已軟化措辭），但只要出現在警告列表就會讓業務誤以為連結壞掉。
+
+### 解決方案（可見性判斷升級）
+
+1. 點擊測試前加 `getComputedStyle` 檢查：`opacity < 0.05`、`visibility: hidden`、`pointer-events: none` 的元素視為「使用者看不到」直接跳過。
+2. 輪播/滑動元件的前後箭頭（aria-label 為 Previous/Next，或 class 含 carousel/slider/swiper/slick 等）在邊界本來就沒反應，屬正常行為，一律不測。
+3. 已知外送/訂位平台（UberEats/foodpanda 等）的 401/403 **完全不列入報告**（真正壞掉的連結會回 404，仍會抓到）。
+4. Framer/React 的 hydration 類 console 訊息（Minified React error #405/#418/#423/#425）加入無害雜訊過濾——每個 Framer 網站都有，業務無法採取行動。
+
+### 驗證結果
+
+- 泰速竹北店重掃：🔴 0 錯誤、🟡 0 警告（原誤判全部消失）
+- demo.html 迴歸測試：6 個真實錯誤全數照抓，無漏抓
+
 ## 待辦 / 未來方向
 
 - [x] ~~2026-07-06（週一）使用者向同事取得「實際出過問題的美編網站」實測，依實際錯誤模式補規則~~（已完成，見階段四）
