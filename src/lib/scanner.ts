@@ -29,6 +29,10 @@ const MAX_CLICK_TESTS = 25;
 
 const ANALYTICS_HOSTS = /google-analytics|googletagmanager|facebook\.|fbcdn|doubleclick|clarity\.ms|hotjar|cloudflareinsights/i;
 const SKIP_HREF = /^(mailto:|tel:|sms:|javascript:|#|$)/i;
+// 平台/框架產生的無害 console 訊息，過濾掉避免報告塞滿雜訊
+const IGNORE_CONSOLE = /report-only|Permissions policy|permissions policy|X-Frame-Options|third-party cookie|was preloaded|deprecated|slow network is detected/i;
+// 一律阻擋機器人的外送/訂位平台，403 屬正常現象
+const BOT_BLOCKING_PLATFORMS = /ubereats\.com|foodpanda\.|inline\.app|opentable\./i;
 
 // ---------- browser ----------
 
@@ -186,9 +190,12 @@ async function checkLinks(
           detail: `連結：${l.href}\n錯誤：${r.error}`,
         });
       } else if (r.status === 401 || r.status === 403 || r.status === 999) {
+        const isPlatform = BOT_BLOCKING_PLATFORMS.test(l.href);
         findings.push({
           severity: 'warning', category: '失效連結', pageUrl,
-          message: `「${label}」回應 HTTP ${r.status}（可能是對方網站阻擋機器人），請人工點一次確認`,
+          message: isPlatform
+            ? `「${label}」是外送/訂位平台連結，平台會阻擋自動檢查（HTTP ${r.status}），連結本身通常是正常的，人工快速點一下確認即可`
+            : `「${label}」回應 HTTP ${r.status}（可能是對方網站阻擋機器人），請人工點一次確認`,
           detail: `連結：${l.href}`,
         });
       }
@@ -204,9 +211,9 @@ async function clickTest(
   stats: { buttonsTested: number },
 ) {
   // Tag clickables with stable indices so we can re-find them after a navigation.
-  const candidates: { idx: number; text: string }[] = await page.evaluate(() => {
+  const candidates: { idx: number; text: string; bareImgLink: boolean }[] = await page.evaluate(() => {
     const els = Array.from(document.querySelectorAll('button, [role="button"], a'));
-    const out: { idx: number; text: string }[] = [];
+    const out: { idx: number; text: string; bareImgLink: boolean }[] = [];
     els.forEach((el, i) => {
       el.setAttribute('data-qaidx', String(i));
       const tag = el.tagName.toLowerCase();
@@ -218,8 +225,22 @@ async function clickTest(
       if (!visible || disabled) return;
       if (inForm || type === 'submit') return; // 避免真的送出表單
       if (tag === 'a' && href && !['#', 'javascript:void(0)', 'javascript:;', 'javascript:void(0);'].includes(href)) return;
-      const text = ((el as HTMLElement).innerText || el.getAttribute('aria-label') || '').trim().slice(0, 40);
-      out.push({ idx: i, text });
+      let text = ((el as HTMLElement).innerText || el.getAttribute('aria-label') || '').trim().slice(0, 40);
+      // 無文字時，用內部圖片或 class 描述這顆按鈕，報告才看得懂是哪一顆
+      const img = el.querySelector('img');
+      let bareImgLink = false;
+      if (!text) {
+        if (img) {
+          const src = img.getAttribute('src') || '';
+          const file = src.split('/').pop()?.split('?')[0] || '';
+          text = `圖片：${img.getAttribute('alt') && img.getAttribute('alt') !== 'Picture' ? img.getAttribute('alt') : file}`.slice(0, 60);
+          // <a> 沒有 href、裡面只有圖片：Weebly 等平台常見的「圖片連結框沒設連結」
+          bareImgLink = tag === 'a' && !href && el.children.length >= 1;
+        } else if (el.className && typeof el.className === 'string') {
+          text = `元素 class="${el.className.slice(0, 40)}"`;
+        }
+      }
+      out.push({ idx: i, text, bareImgLink });
     });
     return out;
   });
@@ -271,11 +292,19 @@ async function clickTest(
 
       const responded = navigated || popupSeen || dialogSeen || netCount > 0 || mutations > 0;
       if (!responded) {
-        findings.push({
-          severity: 'error', category: '死按鈕', pageUrl,
-          message: `按鈕「${c.text || '(無文字)'}」按下去沒有任何反應`,
-          detail: '點擊後沒有跳轉、沒有開新視窗、畫面也沒有任何變化，可能忘記綁定功能或連結。',
-        });
+        if (c.bareImgLink) {
+          findings.push({
+            severity: 'warning', category: '未設連結的圖片', pageUrl,
+            message: `「${c.text}」外層有連結框但沒有設定連結，點了沒反應`,
+            detail: '如果這張圖本來就不需要點擊可忽略；如果應該要能點（例如 LINE 圖示、外送平台、菜單放大），請美編補上連結。',
+          });
+        } else {
+          findings.push({
+            severity: 'error', category: '死按鈕', pageUrl,
+            message: `按鈕「${c.text || '(無文字)'}」按下去沒有任何反應`,
+            detail: '點擊後沒有跳轉、沒有開新視窗、畫面也沒有任何變化，可能忘記綁定功能或連結。',
+          });
+        }
       }
 
       if (navigated) {
@@ -301,6 +330,8 @@ interface ScanCtx {
   emit: Emit;
   findings: Finding[];
   visited: Set<string>;
+  seenConsole: Set<string>;
+  seenResources: Set<string>;
   stats: { linksChecked: number; buttonsTested: number };
 }
 
@@ -313,8 +344,10 @@ async function scanPage(
   const consoleErrors: string[] = [];
   const failedResources: string[] = [];
 
-  page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg.text().slice(0, 200)); });
-  page.on('pageerror', (err) => consoleErrors.push(String(err).slice(0, 200)));
+  page.on('console', (msg) => {
+    if (msg.type() === 'error' && !IGNORE_CONSOLE.test(msg.text())) consoleErrors.push(msg.text().slice(0, 200));
+  });
+  page.on('pageerror', (err) => { if (!IGNORE_CONSOLE.test(String(err))) consoleErrors.push(String(err).slice(0, 200)); });
   page.on('response', (res) => {
     if (res.status() >= 400 && !ANALYTICS_HOSTS.test(res.url())) {
       failedResources.push(`HTTP ${res.status()}  ${res.url().slice(0, 150)}`);
@@ -375,11 +408,17 @@ async function scanPage(
       await clickTest(page, findings, url, emit, ctx.stats);
     }
 
-    // console 錯誤（去重、取前 5）
+    // console 錯誤（跨頁去重——同一個框架錯誤在每頁重複出現時只報一次，取前 5）
     for (const err of [...new Set(consoleErrors)].slice(0, 5)) {
+      const key = err.slice(0, 80);
+      if (ctx.seenConsole.has(key)) continue;
+      ctx.seenConsole.add(key);
       findings.push({ severity: 'warning', category: '程式錯誤', pageUrl: url, message: '瀏覽器 console 出現錯誤（可能影響功能）', detail: err });
     }
     for (const r of [...new Set(failedResources)].slice(0, 5)) {
+      const key = r.slice(0, 80);
+      if (ctx.seenResources.has(key)) continue;
+      ctx.seenResources.add(key);
       findings.push({ severity: 'warning', category: '資源載入', pageUrl: url, message: '頁面有資源載入失敗', detail: r });
     }
 
@@ -448,7 +487,7 @@ export async function runScan(rawUrl: string, depth: 'single' | 'site', emit: Em
   const screenshots: { label: string; data: string }[] = [];
   const pagesScanned: string[] = [];
   const stats = { linksChecked: 0, buttonsTested: 0 };
-  const ctx: ScanCtx = { emit, findings, visited: new Set(), stats };
+  const ctx: ScanCtx = { emit, findings, visited: new Set(), seenConsole: new Set(), seenResources: new Set(), stats };
   let partial = false;
 
   emit({ type: 'progress', message: '啟動瀏覽器…' });
