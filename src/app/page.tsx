@@ -23,7 +23,7 @@ interface Report {
 
 export default function Home() {
   const [url, setUrl] = useState('');
-  const [depth, setDepth] = useState<'single' | 'site'>('single');
+  const [depth, setDepth] = useState<'single' | 'site'>('site');
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<string[]>([]);
   const [report, setReport] = useState<Report | null>(null);
@@ -140,12 +140,12 @@ ${report.screenshots.map((s) => `<div style="flex:1;min-width:250px"><div style=
         </div>
         <div className="depth-row">
           <label>
-            <input type="radio" name="depth" checked={depth === 'single'} onChange={() => setDepth('single')} disabled={running} />
-            只檢查這一頁（快，約 1 分鐘）
-          </label>
-          <label>
             <input type="radio" name="depth" checked={depth === 'site'} onChange={() => setDepth('site')} disabled={running} />
             連同站內子頁面（最多 7 頁，約 2~4 分鐘）
+          </label>
+          <label>
+            <input type="radio" name="depth" checked={depth === 'single'} onChange={() => setDepth('single')} disabled={running} />
+            只檢查這一頁（快，約 1 分鐘）
           </label>
         </div>
       </div>
