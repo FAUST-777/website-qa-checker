@@ -29,8 +29,6 @@ const MAX_CLICK_TESTS = 25;
 
 const ANALYTICS_HOSTS = /google-analytics|googletagmanager|facebook\.|fbcdn|doubleclick|clarity\.ms|hotjar|cloudflareinsights/i;
 const SKIP_HREF = /^(mailto:|tel:|sms:|javascript:|#|$)/i;
-// 平台/框架產生的無害 console 訊息，過濾掉避免報告塞滿雜訊
-const IGNORE_CONSOLE = /report-only|Permissions policy|permissions policy|X-Frame-Options|third-party cookie|was preloaded|deprecated|slow network is detected|Minified React error #(405|418|423|425)/i;
 // 一律阻擋機器人的外送/訂位平台，403 屬正常現象
 const BOT_BLOCKING_PLATFORMS = /ubereats\.com|foodpanda\.|inline\.app|opentable\./i;
 
@@ -338,8 +336,6 @@ interface ScanCtx {
   emit: Emit;
   findings: Finding[];
   visited: Set<string>;
-  seenConsole: Set<string>;
-  seenResources: Set<string>;
   stats: { linksChecked: number; buttonsTested: number };
 }
 
@@ -349,18 +345,6 @@ async function scanPage(
 ): Promise<{ internalLinks: string[]; screenshot?: string }> {
   const { emit, findings } = ctx;
   const page = await browser.newPage();
-  const consoleErrors: string[] = [];
-  const failedResources: string[] = [];
-
-  page.on('console', (msg) => {
-    if (msg.type() === 'error' && !IGNORE_CONSOLE.test(msg.text())) consoleErrors.push(msg.text().slice(0, 200));
-  });
-  page.on('pageerror', (err) => { if (!IGNORE_CONSOLE.test(String(err))) consoleErrors.push(String(err).slice(0, 200)); });
-  page.on('response', (res) => {
-    if (res.status() >= 400 && !ANALYTICS_HOSTS.test(res.url())) {
-      failedResources.push(`HTTP ${res.status()}  ${res.url().slice(0, 150)}`);
-    }
-  });
 
   let internalLinks: string[] = [];
   let screenshot: string | undefined;
@@ -414,20 +398,6 @@ async function scanPage(
 
     if (opts.clickTests) {
       await clickTest(page, findings, url, emit, ctx.stats);
-    }
-
-    // console 錯誤（跨頁去重——同一個框架錯誤在每頁重複出現時只報一次，取前 5）
-    for (const err of [...new Set(consoleErrors)].slice(0, 5)) {
-      const key = err.slice(0, 80);
-      if (ctx.seenConsole.has(key)) continue;
-      ctx.seenConsole.add(key);
-      findings.push({ severity: 'warning', category: '程式錯誤', pageUrl: url, message: '瀏覽器 console 出現錯誤（可能影響功能）', detail: err });
-    }
-    for (const r of [...new Set(failedResources)].slice(0, 5)) {
-      const key = r.slice(0, 80);
-      if (ctx.seenResources.has(key)) continue;
-      ctx.seenResources.add(key);
-      findings.push({ severity: 'warning', category: '資源載入', pageUrl: url, message: '頁面有資源載入失敗', detail: r });
     }
 
     if (opts.screenshot) {
@@ -495,7 +465,7 @@ export async function runScan(rawUrl: string, depth: 'single' | 'site', emit: Em
   const screenshots: { label: string; data: string }[] = [];
   const pagesScanned: string[] = [];
   const stats = { linksChecked: 0, buttonsTested: 0 };
-  const ctx: ScanCtx = { emit, findings, visited: new Set(), seenConsole: new Set(), seenResources: new Set(), stats };
+  const ctx: ScanCtx = { emit, findings, visited: new Set(), stats };
   let partial = false;
 
   emit({ type: 'progress', message: '啟動瀏覽器…' });
