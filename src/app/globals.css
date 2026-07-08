@@ -103,3 +103,26 @@ body {
 }
 
 .footer { margin-top: 3rem; text-align: center; color: #9ca3af; font-size: 0.85rem; }
+
+.legal {
+  margin-top: 2.5rem;
+  padding: 1.8rem 1.4rem 1.4rem;
+  background: #f4f6f8;
+  border-top: 1px solid #e5e7eb;
+  border-radius: 12px 12px 0 0;
+  color: #6b7280;
+  font-size: 0.78rem;
+  line-height: 1.7;
+}
+.legal h3 { font-size: 0.9rem; color: #4b5563; margin-bottom: 0.7rem; }
+.legal p { margin-bottom: 0.7rem; }
+.legal strong { color: #4b5563; }
+.legal .credit {
+  margin-top: 1.4rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid #e5e7eb;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 0.8rem;
+  letter-spacing: 0.03em;
+}
