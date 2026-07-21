@@ -94,8 +94,7 @@ interface PageLink { href: string; text: string; }
 
 // ---------- LINE link rules ----------
 
-async function checkLineLinks(links: PageLink[], findings: Finding[], pageUrl: string, emit: Emit) {
-  const seen = new Set<string>();
+async function checkLineLinks(links: PageLink[], findings: Finding[], pageUrl: string, emit: Emit, seen: Set<string>) {
   for (const { href, text } of links) {
     const h = href.toLowerCase();
     if (!/line\.me|lin\.ee|line:\/\/|liff\.line/.test(h)) continue;
@@ -205,7 +204,7 @@ async function checkLinks(
 
 async function clickTest(
   page: Page, findings: Finding[], pageUrl: string, emit: Emit,
-  stats: { buttonsTested: number },
+  stats: { buttonsTested: number }, seenClick: Set<string>,
 ) {
   // Tag clickables with stable indices so we can re-find them after a navigation.
   const candidates: { idx: number; text: string; bareImgLink: boolean }[] = await page.evaluate(() => {
@@ -298,18 +297,28 @@ async function clickTest(
 
       const responded = navigated || popupSeen || dialogSeen || netCount > 0 || mutations > 0;
       if (!responded) {
+        // 同一個元件（例如套版頁首/頁尾）在每個子頁都會重複命中，用類別+描述文字
+        // 當 key 做全站去重，避免同一顆按鈕的錯誤在報告裡出現 N 次（N=子頁面數）
         if (c.bareImgLink) {
-          findings.push({
-            severity: 'warning', category: '未設連結的圖片', pageUrl,
-            message: `「${c.text}」外層有連結框但沒有設定連結，點了沒反應`,
-            detail: '如果這張圖本來就不需要點擊可忽略；如果應該要能點（例如 LINE 圖示、外送平台、菜單放大），請美編補上連結。',
-          });
+          const key = `未設連結的圖片|${c.text}`;
+          if (!seenClick.has(key)) {
+            seenClick.add(key);
+            findings.push({
+              severity: 'warning', category: '未設連結的圖片', pageUrl,
+              message: `「${c.text}」外層有連結框但沒有設定連結，點了沒反應`,
+              detail: '如果這張圖本來就不需要點擊可忽略；如果應該要能點（例如 LINE 圖示、外送平台、菜單放大），請美編補上連結。',
+            });
+          }
         } else {
-          findings.push({
-            severity: 'error', category: '死按鈕', pageUrl,
-            message: `按鈕「${c.text || '(無文字)'}」按下去沒有任何反應`,
-            detail: '點擊後沒有跳轉、沒有開新視窗、畫面也沒有任何變化，可能忘記綁定功能或連結。',
-          });
+          const key = `死按鈕|${c.text || '(無文字)'}`;
+          if (!seenClick.has(key)) {
+            seenClick.add(key);
+            findings.push({
+              severity: 'error', category: '死按鈕', pageUrl,
+              message: `按鈕「${c.text || '(無文字)'}」按下去沒有任何反應`,
+              detail: '點擊後沒有跳轉、沒有開新視窗、畫面也沒有任何變化，可能忘記綁定功能或連結。',
+            });
+          }
         }
       }
 
@@ -336,6 +345,11 @@ interface ScanCtx {
   emit: Emit;
   findings: Finding[];
   visited: Set<string>;
+  // 這三個集合都是「全站共用」而非單頁內用，讓套版重複出現在每個子頁的
+  // 頁首/頁尾錯誤（同一顆死按鈕、同一個沒設好的 LINE 連結、同一張破圖）只報一次
+  seenLine: Set<string>;
+  seenClick: Set<string>;
+  seenImages: Set<string>;
   stats: { linksChecked: number; buttonsTested: number };
 }
 
@@ -377,6 +391,9 @@ async function scanPage(
         .map((img) => img.src.slice(0, 150))
     );
     for (const src of brokenImgs.slice(0, 10)) {
+      // 同一張破圖（例如套版頁首 logo）在每個子頁都會出現，用圖片網址去重，全站只報一次
+      if (ctx.seenImages.has(src)) continue;
+      ctx.seenImages.add(src);
       findings.push({ severity: 'error', category: '破圖', pageUrl: url, message: '圖片載入失敗（破圖）', detail: `圖片網址：${src}` });
     }
 
@@ -387,17 +404,23 @@ async function scanPage(
         text: ((a as HTMLElement).innerText || a.getAttribute('aria-label') || '').trim().slice(0, 40),
       }))
     );
-    const origin = new URL(url).origin;
+    // 用「實際導向後的網址」而非傳入的原始網址判斷站內連結：
+    // 若網站有 www/https 轉址（例如 abc.com → www.abc.com），用原始網址算 origin
+    // 會導致字串完全比對不上，子頁面清單永遠是空的、多頁模式悄悄退化成只掃一頁。
+    // 同時用去掉結尾斜線後比對，避免首頁自己的 "/" 連結被誤判成另一個子頁面。
+    const finalUrl = page.url();
+    const origin = new URL(finalUrl).origin;
+    const stripSlash = (u: string) => u.replace(/\/+$/, '');
     internalLinks = [...new Set(
       links.map((l) => l.href.split('#')[0])
-        .filter((h) => h.startsWith(origin) && h !== url && /^https?:/.test(h) && !/\.(jpg|png|pdf|zip|mp4)$/i.test(h))
+        .filter((h) => h.startsWith(origin) && stripSlash(h) !== stripSlash(finalUrl) && /^https?:/.test(h) && !/\.(jpg|png|pdf|zip|mp4)$/i.test(h))
     )];
 
-    await checkLineLinks(links, findings, url, emit);
+    await checkLineLinks(links, findings, url, emit, ctx.seenLine);
     await checkLinks(links, findings, url, ctx.visited, emit, ctx.stats);
 
     if (opts.clickTests) {
-      await clickTest(page, findings, url, emit, ctx.stats);
+      await clickTest(page, findings, url, emit, ctx.stats, ctx.seenClick);
     }
 
     if (opts.screenshot) {
@@ -465,7 +488,11 @@ export async function runScan(rawUrl: string, depth: 'single' | 'site', emit: Em
   const screenshots: { label: string; data: string }[] = [];
   const pagesScanned: string[] = [];
   const stats = { linksChecked: 0, buttonsTested: 0 };
-  const ctx: ScanCtx = { emit, findings, visited: new Set(), stats };
+  const ctx: ScanCtx = {
+    emit, findings, visited: new Set(),
+    seenLine: new Set(), seenClick: new Set(), seenImages: new Set(),
+    stats,
+  };
   let partial = false;
 
   emit({ type: 'progress', message: '啟動瀏覽器…' });
